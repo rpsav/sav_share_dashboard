@@ -54,6 +54,559 @@
       strongSell: "Strong Sell",
     };
 
+    // ====== NEWS SENTIMENT CLASSIFIER ======
+    const POSITIVE_KEYWORDS = [
+      "beat","beats","exceeded","surpassed","outperform","outperforms",
+      "record","peak","soared","surged","jumped","rally","rallied","rallies",
+      "advance","advances","climb","climbs","rise","rises","rose","gains","gained",
+      "growth","grew","growing","expansion","expanded","expanding","expands",
+      "profit","profitable","strong","robust","solid","impressive","exceptional",
+      "positive","optimistic","bullish","confident","upbeat",
+      "raise","raised","boost","boosted","upgrade","upgraded","upgrades",
+      "partnership","deal","contract","wins","won","awarded","acquisition","acquired",
+      "innovation","breakthrough","launch","launches","leader","leading","leads",
+      "dividend","buy ","overweight","recommend","approve","approved","milestone","achievement"
+    ];
+    const NEGATIVE_KEYWORDS = [
+      "miss","missed","missing","shortfall","short of",
+      "decline","declined","declining","fall","fell","falling","fallen",
+      "plunge","plunged","drop","dropped","tumble","tumbled","slip","slipped","slid","slides",
+      "crash","crashed","tank","tanked","loss","losses","losing","lose","loses",
+      "weak","weakness","weakening","sluggish","poor","disappointing","disappointed",
+      "negative","pessimistic","bearish","concern","concerns","worried","worry",
+      "sell ","underperform","underweight","downgrade","downgraded","downgrades",
+      "lawsuit","sued","investigation","probe","fined","fines","penalty","penalties",
+      "layoff","layoffs","cuts","downsize","restructuring","warning","warned",
+      "risk","risks","fears","headwinds","challenging",
+      "bankruptcy","bankrupt","breach","hack","cyberattack",
+      "recession","slowdown","contraction","halt","halted"
+    ];
+
+    function classifyImpact(headline, summary) {
+      const text = `${headline || ""} ${summary || ""}`.toLowerCase();
+      let pos = 0, neg = 0;
+      POSITIVE_KEYWORDS.forEach(kw => { if (text.includes(kw)) pos++; });
+      NEGATIVE_KEYWORDS.forEach(kw => { if (text.includes(kw)) neg++; });
+      if (pos === 0 && neg === 0) return "neutral";
+      if (pos > neg) return "positive";
+      if (neg > pos) return "negative";
+      return "neutral";
+    }
+
+    // ====== FETCH FUNCTIONS ======
+    async function fetchPrice() {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${SYMBOL}&token=${FINNHUB_TOKEN}`);
+      if (!r.ok) throw new Error(`Finnhub quote HTTP ${r.status}`);
+      const d = await r.json();
+      if (typeof d.c !== "number" || d.c <= 0) throw new Error("Invalid price data");
+      return { price:d.c, change:d.d, changePct:d.dp, high:d.h, low:d.l, open:d.o, prevClose:d.pc };
+    }
+
+    async function fetchNews() {
+      const today = new Date();
+      const monthAgo = new Date(today.getTime() - 30 * 86400000);
+      const f = d => d.toISOString().split("T")[0];
+      const r = await fetch(`https://finnhub.io/api/v1/company-news?symbol=${SYMBOL}&from=${f(monthAgo)}&to=${f(today)}&token=${FINNHUB_TOKEN}`);
+      if (!r.ok) throw new Error(`Finnhub news HTTP ${r.status}`);
+      const arr = await r.json();
+      return Array.isArray(arr) ? arr.slice(0, 8) : [];
+    }
+
+    async function fetchRecommendations() {
+      const r = await fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${SYMBOL}&token=${FINNHUB_TOKEN}`);
+      if (!r.ok) throw new Error(`Finnhub recommendation HTTP ${r.status}`);
+      const arr = await r.json();
+      if (!Array.isArray(arr)) return [];
+      // Sort newest first, return up to 6 periods
+      return arr
+        .sort((a, b) => (b.period || "").localeCompare(a.period || ""))
+        .slice(0, 6);
+    }
+
+    async function fetchMetrics() {
+      const r = await fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${SYMBOL}&metric=all&token=${FINNHUB_TOKEN}`);
+      if (!r.ok) throw new Error(`Finnhub metric HTTP ${r.status}`);
+      const j = await r.json();
+      if (!j.metric) throw new Error("No metric data in response");
+      return j.metric;
+    }
+
+    async function fetchHistorical() {
+      if (!ALPHAVANTAGE_TOKEN) {
+        throw new Error("Alpha Vantage API key required. Get a free one at alphavantage.co/support/#api-key and add it to the ALPHAVANTAGE_TOKEN constant at the top of the HTML.");
+      }
+
+      const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_MONTHLY&symbol=${SYMBOL}&apikey=${ALPHAVANTAGE_TOKEN}`);
+      if (!r.ok) throw new Error(`Alpha Vantage HTTP ${r.status}`);
+      const j = await r.json();
+
+      if (j.Note) throw new Error("Alpha Vantage rate limit reached (25/day on free tier). Try again tomorrow.");
+      if (j["Error Message"]) throw new Error(`Alpha Vantage: ${j["Error Message"]}`);
+      if (j.Information) throw new Error(`Alpha Vantage: ${j.Information}`);
+
+      const series = j["Monthly Time Series"];
+      if (!series) throw new Error(`Unexpected response: ${JSON.stringify(j).slice(0, 150)}`);
+
+      const rows = Object.entries(series)
+        .map(([date, vals]) => {
+          const price = parseFloat(vals["4. close"]);
+          if (isNaN(price)) return null;
+          const [y, m] = date.split("-");
+          return { date: `${monthAbbr[+m]} '${y.slice(2)}`, price, raw: date };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.raw > b.raw ? 1 : -1)
+        .slice(-120);
+
+      if (rows.length < 4) throw new Error(`Only ${rows.length} months returned`);
+      return rows;
+    }
+
+    // ====== UI HELPERS ======
+    const Card = ({ children, style }) =>
+      <div style={{ background:"#0f1825", border:"1px solid #1a2744", borderRadius:12, padding:20, ...style }}>{children}</div>;
+    const Label = ({ children }) =>
+      <div style={{ fontSize:11, color:"#475569", textTransform:"uppercase", letterSpacing:"0.6px", marginBottom:14, fontWeight:600 }}>{children}</div>;
+    const Spin = () =>
+      <span style={{ display:"inline-block", animation:"spin 1s linear infinite", marginRight:6 }}>⟳</span>;
+    const Loading = ({ msg }) =>
+      <div style={{ color:"#475569", fontSize:13, padding:"14px 0", display:"flex", alignItems:"center" }}><Spin />{msg}</div>;
+    const ErrMsg = ({ msg }) =>
+      <div style={{ color:"#ef4444", fontSize:11, padding:10, background:"rgba(239,68,68,0.08)", borderRadius:8, border:"1px solid rgba(239,68,68,0.2)", marginTop:8, wordBreak:"break-all", lineHeight:1.6, whiteSpace:"pre-wrap" }}>⚠ {msg}</div>;
+
+    // ====== SVG PRICE CHART (interactive) ======
+    function PriceChart({ data }) {
+      const [hoverIdx, setHoverIdx] = useState(null);
+      const svgRef = useRef(null);
+
+      if (!data || data.length < 4) return null;
+      const W = 1000, H = 280, PL = 50, PR = 10, PT = 10, PB = 30;
+      const cw = W - PL - PR, ch = H - PT - PB;
+      const prices = data.map(d => d.price);
+      const min = Math.min(...prices) * 0.97;
+      const max = Math.max(...prices) * 1.03;
+      const xStep = cw / (data.length - 1);
+      const pts = data.map((d, i) => ({
+        x: PL + i * xStep,
+        y: PT + ch - ((d.price - min) / (max - min)) * ch,
+        ...d
+      }));
+      const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+      const areaPath = `${linePath} L ${PL + cw} ${PT + ch} L ${PL} ${PT + ch} Z`;
+      const labelStep = Math.max(1, Math.floor(pts.length / 7));
+
+      const handleMove = (e) => {
+        const svg = svgRef.current;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const vx = (x / rect.width) * W;
+        let nearest = 0, minDist = Infinity;
+        for (let i = 0; i < pts.length; i++) {
+          const d = Math.abs(pts[i].x - vx);
+          if (d < minDist) { minDist = d; nearest = i; }
+        }
+        setHoverIdx(nearest);
+      };
+      const handleLeave = () => setHoverIdx(null);
+
+      // Tooltip
+      let tip = null;
+      if (hoverIdx !== null && pts[hoverIdx]) {
+        const p = pts[hoverIdx];
+        const tw = 110, th = 46;
+        let tx = p.x - tw / 2;
+        if (tx < PL) tx = PL;
+        if (tx + tw > PL + cw) tx = PL + cw - tw;
+        let ty = p.y - th - 14;
+        if (ty < PT) ty = p.y + 14;
+        tip = (
+          <g style={{ pointerEvents: "none" }}>
+            <line x1={p.x} y1={PT} x2={p.x} y2={PT + ch} stroke="#475569" strokeDasharray="3 3" strokeWidth="1" />
+            <circle cx={p.x} cy={p.y} r="5" fill="#3b82f6" stroke="#0f1825" strokeWidth="2" />
+            <rect x={tx} y={ty} width={tw} height={th} fill="#1a2744" stroke="#3b82f6" strokeWidth="1" rx="4" />
+            <text x={tx + tw/2} y={ty + 18} fill="#94a3b8" fontSize="11" textAnchor="middle">{p.date}</text>
+            <text x={tx + tw/2} y={ty + 35} fill="#e2e8f0" fontSize="14" fontWeight="700" textAnchor="middle">${p.price.toFixed(2)}</text>
+          </g>
+        );
+      }
+
+      return (
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ width:"100%", height:280, cursor: hoverIdx !== null ? "crosshair" : "default" }}
+          preserveAspectRatio="none"
+          onMouseMove={handleMove}
+          onMouseLeave={handleLeave}
+        >
+          <defs>
+            <linearGradient id="chart-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          {[0, 0.25, 0.5, 0.75, 1].map(t => {
+            const y = PT + ch * (1 - t);
+            const val = (min + (max - min) * t).toFixed(0);
+            return (
+              <g key={t}>
+                <line x1={PL} y1={y} x2={PL + cw} y2={y} stroke="#1a2744" strokeDasharray="3 3" />
+                <text x={PL - 5} y={y + 3} fill="#475569" fontSize="10" textAnchor="end">${val}</text>
+              </g>
+            );
+          })}
+          {pts.filter((_, i) => i % labelStep === 0).map((p, i) =>
+            <text key={i} x={p.x} y={H - 10} fill="#475569" fontSize="10" textAnchor="middle">{p.date}</text>
+          )}
+          <path d={areaPath} fill="url(#chart-grad)" />
+          <path d={linePath} fill="none" stroke="#3b82f6" strokeWidth="2" />
+          {pts.length <= 30 && pts.map((p, i) =>
+            <circle key={i} cx={p.x} cy={p.y} r="2" fill="#3b82f6" />
+          )}
+          {/* invisible overlay to catch mouse events across full chart area */}
+          <rect x={PL} y={PT} width={cw} height={ch} fill="transparent" />
+          {tip}
+        </svg>
+      );
+    }
+
+    // ====== RECOMMENDATION TRENDS CHART (stacked bars) ======
+    function RecommendationChart({ data }) {
+      if (!data || data.length === 0) return null;
+      const sorted = [...data].sort((a, b) => (a.period || "").localeCompare(b.period || ""));
+
+      const W = 600, H = 220, PL = 30, PR = 10, PT = 18, PB = 36;
+      const cw = W - PL - PR, ch = H - PT - PB;
+
+      const totals = sorted.map(d => d.strongBuy + d.buy + d.hold + d.sell + d.strongSell);
+      const maxTotal = Math.max(...totals, 1);
+
+      const slotW = cw / sorted.length;
+      const barW  = Math.min(slotW * 0.65, 60);
+
+      const segOrder = ["strongSell", "sell", "hold", "buy", "strongBuy"];
+
+      // y axis ticks (3 levels)
+      const yTicks = [0, 0.5, 1].map(t => ({
+        t,
+        y: PT + ch * (1 - t),
+        v: Math.round(maxTotal * t),
+      }));
+
+      return (
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:220 }}>
+          {/* grid */}
+          {yTicks.map(({ y, v, t }) => (
+            <g key={t}>
+              <line x1={PL} y1={y} x2={PL + cw} y2={y} stroke="#1a2744" strokeDasharray="3 3" />
+              <text x={PL - 5} y={y + 3} fill="#475569" fontSize="10" textAnchor="end">{v}</text>
+            </g>
+          ))}
+          {/* bars */}
+          {sorted.map((d, i) => {
+            const total = d.strongBuy + d.buy + d.hold + d.sell + d.strongSell;
+            const xCenter = PL + (i + 0.5) * slotW;
+            const x = xCenter - barW / 2;
+            const baseY = PT + ch;
+            let cursorY = baseY;
+            return (
+              <g key={i}>
+                {segOrder.map(key => {
+                  const val = d[key];
+                  if (!val) return null;
+                  const segH = (val / maxTotal) * ch;
+                  const segY = cursorY - segH;
+                  cursorY = segY;
+                  return (
+                    <rect key={key} x={x} y={segY} width={barW} height={segH} fill={REC_COLORS[key]} rx="1">
+                      <title>{`${REC_LABELS[key]}: ${val} (${fmtPeriod(d.period)})`}</title>
+                    </rect>
+                  );
+                })}
+                {/* total above */}
+                <text x={xCenter} y={baseY - (total / maxTotal) * ch - 5} fill="#94a3b8" fontSize="10" fontWeight="600" textAnchor="middle">{total}</text>
+                {/* period below */}
+                <text x={xCenter} y={H - 18} fill="#94a3b8" fontSize="11" textAnchor="middle">{fmtPeriod(d.period)}</text>
+              </g>
+            );
+          })}
+        </svg>
+      );
+    }
+
+    // ====== LEGEND ======
+    function RecLegend() {
+      const items = ["strongBuy","buy","hold","sell","strongSell"];
+      return (
+        <div style={{ display:"flex", flexWrap:"wrap", gap:8, justifyContent:"center", marginTop:10, fontSize:10, color:"#94a3b8" }}>
+          {items.map(k => (
+            <div key={k} style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <span style={{ display:"inline-block", width:10, height:10, borderRadius:2, background:REC_COLORS[k] }} />
+              <span>{REC_LABELS[k]}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ====== MAIN DASHBOARD ======
+    function Dashboard() {
+      const [price, setPrice]   = useState(null);
+      const [priceE, setPriceE] = useState(null);
+      const [priceL, setPriceL] = useState(true);
+
+      const [chart, setChart]   = useState([]);
+      const [chartE, setChartE] = useState(null);
+      const [chartL, setChartL] = useState(true);
+
+      const [news, setNews]     = useState([]);
+      const [newsE, setNewsE]   = useState(null);
+      const [newsL, setNewsL]   = useState(true);
+
+      const [recs, setRecs]     = useState([]);
+      const [recsE, setRecsE]   = useState(null);
+      const [recsL, setRecsL]   = useState(true);
+
+      const [metrics, setMetrics] = useState(null);
+      const [metricsE, setMetricsE] = useState(null);
+      const [metricsL, setMetricsL] = useState(true);
+
+      const [ts, setTs]         = useState(null);
+
+      const refresh = useCallback(() => {
+        setTs(new Date());
+
+        setPriceL(true); setPriceE(null);
+        fetchPrice().then(setPrice).catch(e => setPriceE(e.message)).finally(() => setPriceL(false));
+
+        setChartL(true); setChartE(null);
+        fetchHistorical().then(setChart).catch(e => setChartE(e.message)).finally(() => setChartL(false));
+
+        setNewsL(true); setNewsE(null);
+        fetchNews().then(setNews).catch(e => setNewsE(e.message)).finally(() => setNewsL(false));
+
+        setRecsL(true); setRecsE(null);
+        fetchRecommendations().then(setRecs).catch(e => setRecsE(e.message)).finally(() => setRecsL(false));
+
+        setMetricsL(true); setMetricsE(null);
+        fetchMetrics().then(setMetrics).catch(e => setMetricsE(e.message)).finally(() => setMetricsL(false));
+      }, []);
+
+      useEffect(() => { refresh(); }, [refresh]);
+
+      const up   = (price?.changePct ?? 0) >= 0;
+      const pCol = up ? "#10b981" : "#ef4444";
+      const sign = up ? "+" : "";
+
+      // Latest recommendation (recs is sorted newest-first)
+      const latest = recs.length ? recs[0] : null;
+      const recSummary = latest ? (() => {
+        const total = latest.strongBuy + latest.buy + latest.hold + latest.sell + latest.strongSell;
+        if (!total) return null;
+        const buyish  = latest.strongBuy + latest.buy;
+        const sellish = latest.sell + latest.strongSell;
+        let consensus = "Hold";
+        if (latest.strongBuy >= total * 0.4)   consensus = "Strong Buy";
+        else if (buyish      >= total * 0.55)  consensus = "Buy";
+        else if (sellish     >= total * 0.5)   consensus = "Sell";
+        return { consensus, total, period: latest.period };
+      })() : null;
+
+      return (
+        <div style={{ minHeight:"100vh", padding:20 }}>
+          {/* Header */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:12, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ width:38, height:38, borderRadius:9, background:"linear-gradient(135deg,#6366f1,#8b5cf6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:800, color:"#fff" }}>A</div>
+              <div>
+                <div style={{ fontSize:17, fontWeight:700, letterSpacing:"-0.3px" }}>Accenture Intelligence Dashboard</div>
+                <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>NYSE: ACN · Finnhub + Stooq · {ts ? `Refreshed ${ts.toLocaleTimeString()}` : "Loading…"}</div>
+              </div>
+            </div>
+            <button onClick={refresh} style={{ background:"linear-gradient(135deg,#3b82f6,#6366f1)", border:"none", borderRadius:8, color:"#fff", padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }}>↻ Refresh</button>
+          </div>
+
+          {/* Price chart */}
+          <Card style={{ marginBottom:18 }}>
+            <Label>ACN Share Price — 10-Year History (Monthly)</Label>
+            {chartL ? <Loading msg="Fetching historical price data…" />
+              : chartE ? <ErrMsg msg={`Chart: ${chartE}`} />
+              : <PriceChart data={chart} />
+            }
+          </Card>
+
+          {/* Price stats */}
+          <div className="grid-5" style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:12, marginBottom:18 }}>
+            {[
+              { lbl:"Current Price", main: price ? fmtMoney(price.price) : "—", sub: price ? `${sign}${price.change.toFixed(2)} (${sign}${price.changePct.toFixed(2)}%)` : null, sCol:pCol, accent:true },
+              { lbl:"Day High",   main: price ? fmtMoney(price.high) : "—" },
+              { lbl:"Day Low",    main: price ? fmtMoney(price.low)  : "—" },
+              { lbl:"Open",       main: price ? fmtMoney(price.open) : "—" },
+              { lbl:"Prev Close", main: price ? fmtMoney(price.prevClose) : "—" },
+            ].map((s, i) => (
+              <div key={i} style={{ background: s.accent ? "linear-gradient(135deg,rgba(59,130,246,0.15),rgba(99,102,241,0.08))" : "#0f1825", border:`1px solid ${s.accent ? "#3b82f6" : "#1a2744"}`, borderRadius:10, padding:"14px 16px" }}>
+                <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:5 }}>{s.lbl}</div>
+                {priceL ? <div style={{ color:"#334155", fontSize:12 }}><Spin />loading</div>
+                  : <>
+                      <div style={{ fontSize: s.accent ? 22 : 15, fontWeight:700, color: s.accent ? "#e2e8f0" : "#94a3b8" }}>{s.main}</div>
+                      {s.sub && <div style={{ fontSize:12, color:s.sCol, fontWeight:600, marginTop:2 }}>{s.sub}</div>}
+                    </>
+                }
+              </div>
+            ))}
+          </div>
+          {priceE && <div style={{ marginBottom:12 }}><ErrMsg msg={`Price: ${priceE}`} /></div>}
+
+          {/* Analyst Recommendation Trends — full-width */}
+          <Card style={{ marginBottom:18 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
+              <div style={{ fontSize:11, color:"#475569", textTransform:"uppercase", letterSpacing:"0.6px", fontWeight:600 }}>Analyst Recommendations — Monthly Trend</div>
+              {recSummary && (
+                <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                  <div style={{ fontSize:11, color:"#475569" }}>
+                    <span style={{ marginRight:6 }}>Latest:</span>
+                    <span style={{ color:"#a5b4fc", fontWeight:700, fontSize:13 }}>{recSummary.consensus}</span>
+                  </div>
+                  <div style={{ fontSize:11, color:"#475569" }}>
+                    {recSummary.total} analysts · {fmtPeriod(recSummary.period)}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {recsL ? <Loading msg="Fetching analyst recommendations from Finnhub…" />
+              : recsE ? <ErrMsg msg={`Recommendations: ${recsE}`} />
+              : recs.length === 0 ? <div style={{ color:"#334155", fontSize:13 }}>No analyst recommendations available.</div>
+              : (
+                <>
+                  <RecommendationChart data={recs} />
+                  <RecLegend />
+
+                  {/* Current breakdown row */}
+                  {latest && (
+                    <div style={{ marginTop:18, display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:10 }}>
+                      {["strongBuy","buy","hold","sell","strongSell"].map(k => (
+                        <div key={k} style={{ background:`${REC_COLORS[k]}10`, border:`1px solid ${REC_COLORS[k]}30`, borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+                          <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:4 }}>{REC_LABELS[k]}</div>
+                          <div style={{ fontSize:22, fontWeight:800, color:REC_COLORS[k] }}>{latest[k]}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )
+            }
+          </Card>
+
+          {/* News + Price Targets */}
+          <div className="grid-news" style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, marginBottom:18 }}>
+            <Card>
+              <Label>Latest News (Finnhub · past 30 days)</Label>
+              {newsL ? <Loading msg="Fetching news from Finnhub…" />
+                : newsE ? <ErrMsg msg={`News: ${newsE}`} />
+                : news.length ? (
+                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                    {news.map((item, i) => (
+                      <div key={i} style={{ background:"rgba(99,102,241,0.05)", border:"1px solid #1a2744", borderLeft:"3px solid #6366f1", borderRadius:8, padding:"12px 14px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6, gap:12 }}>
+                          <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize:13, fontWeight:600, color:"#e2e8f0", lineHeight:1.4, flex:1 }}>
+                            {item.headline}
+                          </a>
+                          <span style={{ fontSize:10, color:"#475569", flexShrink:0, whiteSpace:"nowrap" }}>{fmtDate(item.datetime)}</span>
+                        </div>
+                        {item.summary && (
+                          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
+                            {item.summary.slice(0, 220)}{item.summary.length > 220 ? "…" : ""}
+                          </div>
+                        )}
+                        <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                          {item.source && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"rgba(99,102,241,0.15)", color:"#818cf8" }}>{item.source}</span>}
+                          {item.category && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#1a2744", color:"#94a3b8" }}>{item.category}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <div style={{ color:"#334155", fontSize:13 }}>No news in past 30 days.</div>
+              }
+            </Card>
+
+            <Card style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <Label>Key Financial Metrics</Label>
+              {metricsL ? <Loading msg="Fetching metrics from Finnhub…" />
+                : metricsE ? <ErrMsg msg={`Metrics: ${metricsE}`} />
+                : metrics ? (() => {
+                    const m = metrics;
+                    const mcap = m.marketCapitalization;
+                    const mcapStr = (typeof mcap === "number") ?
+                      (mcap >= 1e6 ? `${(mcap/1e6).toFixed(2)}T`
+                       : mcap >= 1e3 ? `${(mcap/1e3).toFixed(1)}B`
+                       : `${mcap.toFixed(0)}M`) : "—";
+                    const pe = m.peTTM || m.peBasicExclExtraTTM || m.peExclExtraTTM;
+                    const eps = m.epsTTM || m.epsBasicExclExtraItemsTTM || m.epsExclExtraItemsTTM;
+                    const rows = [
+                      { l:"52W High",     v: m["52WeekHigh"]   != null ? `${m["52WeekHigh"].toFixed(2)}`  : "—" },
+                      { l:"52W Low",      v: m["52WeekLow"]    != null ? `${m["52WeekLow"].toFixed(2)}`   : "—" },
+                      { l:"P/E (TTM)",    v: pe  != null ? pe.toFixed(2) : "—" },
+                      { l:"EPS (TTM)",    v: eps != null ? `${eps.toFixed(2)}` : "—" },
+                      { l:"Beta",         v: m.beta != null ? m.beta.toFixed(2) : "—" },
+                      { l:"Div Yield",    v: m.dividendYieldIndicatedAnnual != null ? `${m.dividendYieldIndicatedAnnual.toFixed(2)}%` : "—" },
+                      { l:"Div/Share",    v: m.dividendPerShareAnnual != null ? `${m.dividendPerShareAnnual.toFixed(2)}` : "—" },
+                      { l:"Avg Vol (10D)", v: m["10DayAverageTradingVolume"] != null ? `${m["10DayAverageTradingVolume"].toFixed(2)}M` : "—" },
+                    ];
+                    return (
+                      <>
+                        <div style={{ textAlign:"center", padding:"14px", background:"rgba(99,102,241,0.08)", borderRadius:10, border:"1px solid rgba(99,102,241,0.2)" }}>
+                          <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:6 }}>Market Cap</div>
+                          <div style={{ fontSize:28, fontWeight:800, color:"#a5b4fc" }}>{mcapStr}</div>
+                        </div>
+                        <div>
+                          {rows.map(r => (
+                            <div key={r.l} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:"1px solid #1a2744" }}>
+                              <span style={{ fontSize:12, color:"#64748b" }}>{r.l}</span>
+                              <span style={{ fontSize:14, fontWeight:700, color:"#94a3b8" }}>{r.v}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })() : <div style={{ color:"#334155", fontSize:13 }}>No metrics data available.</div>
+              }
+            </Card>
+          </div>
+
+          {/* Footer */}
+          <div style={{ fontSize:11, color:"#334155", textAlign:"center", marginTop:20, paddingBottom:10 }}>
+            Data: <a href="https://finnhub.io" target="_blank" rel="noreferrer">Finnhub</a> · <a href="https://stooq.com" target="_blank" rel="noreferrer">Stooq</a>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<Dashboard />);
+  </script>
+</body>
+</html>      if (!p) return "";
+      const [y, m] = p.split("-");
+      return `${monthAbbr[+m] || m} '${(y || "").slice(2)}`;
+    };
+
+    const REC_COLORS = {
+      strongBuy:  "#059669",
+      buy:        "#10b981",
+      hold:       "#f59e0b",
+      sell:       "#f87171",
+      strongSell: "#ef4444",
+    };
+    const REC_LABELS = {
+      strongBuy:  "Strong Buy",
+      buy:        "Buy",
+      hold:       "Hold",
+      sell:       "Sell",
+      strongSell: "Strong Sell",
+    };
+
     // ====== FETCH FUNCTIONS ======
     async function fetchPrice() {
       const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${SYMBOL}&token=${FINNHUB_TOKEN}`);
