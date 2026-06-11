@@ -26,7 +26,7 @@
 
     // ====== CONFIG ======
     const FINNHUB_TOKEN = "d8k3fghr01qjgd6qvv0gd8k3fghr01qjgd6qvv10";
-    const ALPHAVANTAGE_TOKEN = "UYAY90XN6OM3UV1M"; // Free key at https://www.alphavantage.co/support/#api-key — used for chart data
+    const ALPHAVANTAGE_TOKEN = "UYAY90XN6OM3UV1M";
     const SYMBOL = "ACN";
 
     // ====== HELPERS ======
@@ -117,7 +117,6 @@
       if (!r.ok) throw new Error(`Finnhub recommendation HTTP ${r.status}`);
       const arr = await r.json();
       if (!Array.isArray(arr)) return [];
-      // Sort newest first, return up to 6 periods
       return arr
         .sort((a, b) => (b.period || "").localeCompare(a.period || ""))
         .slice(0, 6);
@@ -210,7 +209,6 @@
       };
       const handleLeave = () => setHoverIdx(null);
 
-      // Tooltip
       let tip = null;
       if (hoverIdx !== null && pts[hoverIdx]) {
         const p = pts[hoverIdx];
@@ -264,14 +262,13 @@
           {pts.length <= 30 && pts.map((p, i) =>
             <circle key={i} cx={p.x} cy={p.y} r="2" fill="#3b82f6" />
           )}
-          {/* invisible overlay to catch mouse events across full chart area */}
           <rect x={PL} y={PT} width={cw} height={ch} fill="transparent" />
           {tip}
         </svg>
       );
     }
 
-    // ====== RECOMMENDATION TRENDS CHART (stacked bars) ======
+    // ====== RECOMMENDATION TRENDS CHART ======
     function RecommendationChart({ data }) {
       if (!data || data.length === 0) return null;
       const sorted = [...data].sort((a, b) => (a.period || "").localeCompare(b.period || ""));
@@ -284,26 +281,17 @@
 
       const slotW = cw / sorted.length;
       const barW  = Math.min(slotW * 0.65, 60);
-
       const segOrder = ["strongSell", "sell", "hold", "buy", "strongBuy"];
-
-      // y axis ticks (3 levels)
-      const yTicks = [0, 0.5, 1].map(t => ({
-        t,
-        y: PT + ch * (1 - t),
-        v: Math.round(maxTotal * t),
-      }));
+      const yTicks = [0, 0.5, 1].map(t => ({ t, y: PT + ch * (1 - t), v: Math.round(maxTotal * t) }));
 
       return (
         <svg viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:220 }}>
-          {/* grid */}
           {yTicks.map(({ y, v, t }) => (
             <g key={t}>
               <line x1={PL} y1={y} x2={PL + cw} y2={y} stroke="#1a2744" strokeDasharray="3 3" />
               <text x={PL - 5} y={y + 3} fill="#475569" fontSize="10" textAnchor="end">{v}</text>
             </g>
           ))}
-          {/* bars */}
           {sorted.map((d, i) => {
             const total = d.strongBuy + d.buy + d.hold + d.sell + d.strongSell;
             const xCenter = PL + (i + 0.5) * slotW;
@@ -324,9 +312,7 @@
                     </rect>
                   );
                 })}
-                {/* total above */}
                 <text x={xCenter} y={baseY - (total / maxTotal) * ch - 5} fill="#94a3b8" fontSize="10" fontWeight="600" textAnchor="middle">{total}</text>
-                {/* period below */}
                 <text x={xCenter} y={H - 18} fill="#94a3b8" fontSize="11" textAnchor="middle">{fmtPeriod(d.period)}</text>
               </g>
             );
@@ -335,7 +321,6 @@
       );
     }
 
-    // ====== LEGEND ======
     function RecLegend() {
       const items = ["strongBuy","buy","hold","sell","strongSell"];
       return (
@@ -399,7 +384,6 @@
       const pCol = up ? "#10b981" : "#ef4444";
       const sign = up ? "+" : "";
 
-      // Latest recommendation (recs is sorted newest-first)
       const latest = recs.length ? recs[0] : null;
       const recSummary = latest ? (() => {
         const total = latest.strongBuy + latest.buy + latest.hold + latest.sell + latest.strongSell;
@@ -421,7 +405,7 @@
               <div style={{ width:38, height:38, borderRadius:9, background:"linear-gradient(135deg,#6366f1,#8b5cf6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:800, color:"#fff" }}>A</div>
               <div>
                 <div style={{ fontSize:17, fontWeight:700, letterSpacing:"-0.3px" }}>Accenture Intelligence Dashboard</div>
-                <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>NYSE: ACN · Finnhub + Stooq · {ts ? `Refreshed ${ts.toLocaleTimeString()}` : "Loading…"}</div>
+                <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>NYSE: ACN · Finnhub + Alpha Vantage · {ts ? `Refreshed ${ts.toLocaleTimeString()}` : "Loading…"}</div>
               </div>
             </div>
             <button onClick={refresh} style={{ background:"linear-gradient(135deg,#3b82f6,#6366f1)", border:"none", borderRadius:8, color:"#fff", padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }}>↻ Refresh</button>
@@ -458,76 +442,44 @@
           </div>
           {priceE && <div style={{ marginBottom:12 }}><ErrMsg msg={`Price: ${priceE}`} /></div>}
 
-          {/* Analyst Recommendation Trends — full-width */}
-          <Card style={{ marginBottom:18 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
-              <div style={{ fontSize:11, color:"#475569", textTransform:"uppercase", letterSpacing:"0.6px", fontWeight:600 }}>Analyst Recommendations — Monthly Trend</div>
-              {recSummary && (
-                <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-                  <div style={{ fontSize:11, color:"#475569" }}>
-                    <span style={{ marginRight:6 }}>Latest:</span>
-                    <span style={{ color:"#a5b4fc", fontWeight:700, fontSize:13 }}>{recSummary.consensus}</span>
-                  </div>
-                  <div style={{ fontSize:11, color:"#475569" }}>
-                    {recSummary.total} analysts · {fmtPeriod(recSummary.period)}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {recsL ? <Loading msg="Fetching analyst recommendations from Finnhub…" />
-              : recsE ? <ErrMsg msg={`Recommendations: ${recsE}`} />
-              : recs.length === 0 ? <div style={{ color:"#334155", fontSize:13 }}>No analyst recommendations available.</div>
-              : (
-                <>
-                  <RecommendationChart data={recs} />
-                  <RecLegend />
-
-                  {/* Current breakdown row */}
-                  {latest && (
-                    <div style={{ marginTop:18, display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:10 }}>
-                      {["strongBuy","buy","hold","sell","strongSell"].map(k => (
-                        <div key={k} style={{ background:`${REC_COLORS[k]}10`, border:`1px solid ${REC_COLORS[k]}30`, borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
-                          <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:4 }}>{REC_LABELS[k]}</div>
-                          <div style={{ fontSize:22, fontWeight:800, color:REC_COLORS[k] }}>{latest[k]}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )
-            }
-          </Card>
-
-          {/* News + Price Targets */}
-          <div className="grid-news" style={{ display:"grid", gridTemplateColumns:"1fr 320px", gap:16, marginBottom:18 }}>
+          {/* Analyst Recommendations + Key Metrics — side by side */}
+          <div className="grid-news" style={{ display:"grid", gridTemplateColumns:"1fr 340px", gap:16, marginBottom:18 }}>
             <Card>
-              <Label>Latest News (Finnhub · past 30 days)</Label>
-              {newsL ? <Loading msg="Fetching news from Finnhub…" />
-                : newsE ? <ErrMsg msg={`News: ${newsE}`} />
-                : news.length ? (
-                  <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-                    {news.map((item, i) => (
-                      <div key={i} style={{ background:"rgba(99,102,241,0.05)", border:"1px solid #1a2744", borderLeft:"3px solid #6366f1", borderRadius:8, padding:"12px 14px" }}>
-                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6, gap:12 }}>
-                          <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize:13, fontWeight:600, color:"#e2e8f0", lineHeight:1.4, flex:1 }}>
-                            {item.headline}
-                          </a>
-                          <span style={{ fontSize:10, color:"#475569", flexShrink:0, whiteSpace:"nowrap" }}>{fmtDate(item.datetime)}</span>
-                        </div>
-                        {item.summary && (
-                          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
-                            {item.summary.slice(0, 220)}{item.summary.length > 220 ? "…" : ""}
-                          </div>
-                        )}
-                        <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}>
-                          {item.source && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"rgba(99,102,241,0.15)", color:"#818cf8" }}>{item.source}</span>}
-                          {item.category && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#1a2744", color:"#94a3b8" }}>{item.category}</span>}
-                        </div>
-                      </div>
-                    ))}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, flexWrap:"wrap", gap:8 }}>
+                <div style={{ fontSize:11, color:"#475569", textTransform:"uppercase", letterSpacing:"0.6px", fontWeight:600 }}>Analyst Recommendations — Monthly Trend</div>
+                {recSummary && (
+                  <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                    <div style={{ fontSize:11, color:"#475569" }}>
+                      <span style={{ marginRight:6 }}>Latest:</span>
+                      <span style={{ color:"#a5b4fc", fontWeight:700, fontSize:13 }}>{recSummary.consensus}</span>
+                    </div>
+                    <div style={{ fontSize:11, color:"#475569" }}>
+                      {recSummary.total} analysts · {fmtPeriod(recSummary.period)}
+                    </div>
                   </div>
-                ) : <div style={{ color:"#334155", fontSize:13 }}>No news in past 30 days.</div>
+                )}
+              </div>
+
+              {recsL ? <Loading msg="Fetching analyst recommendations from Finnhub…" />
+                : recsE ? <ErrMsg msg={`Recommendations: ${recsE}`} />
+                : recs.length === 0 ? <div style={{ color:"#334155", fontSize:13 }}>No analyst recommendations available.</div>
+                : (
+                  <>
+                    <RecommendationChart data={recs} />
+                    <RecLegend />
+
+                    {latest && (
+                      <div style={{ marginTop:18, display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:10 }}>
+                        {["strongBuy","buy","hold","sell","strongSell"].map(k => (
+                          <div key={k} style={{ background:`${REC_COLORS[k]}10`, border:`1px solid ${REC_COLORS[k]}30`, borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+                            <div style={{ fontSize:10, color:"#475569", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:4 }}>{REC_LABELS[k]}</div>
+                            <div style={{ fontSize:22, fontWeight:800, color:REC_COLORS[k] }}>{latest[k]}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
               }
             </Card>
 
@@ -539,19 +491,19 @@
                     const m = metrics;
                     const mcap = m.marketCapitalization;
                     const mcapStr = (typeof mcap === "number") ?
-                      (mcap >= 1e6 ? `${(mcap/1e6).toFixed(2)}T`
-                       : mcap >= 1e3 ? `${(mcap/1e3).toFixed(1)}B`
-                       : `${mcap.toFixed(0)}M`) : "—";
+                      (mcap >= 1e6 ? `$${(mcap/1e6).toFixed(2)}T`
+                       : mcap >= 1e3 ? `$${(mcap/1e3).toFixed(1)}B`
+                       : `$${mcap.toFixed(0)}M`) : "—";
                     const pe = m.peTTM || m.peBasicExclExtraTTM || m.peExclExtraTTM;
                     const eps = m.epsTTM || m.epsBasicExclExtraItemsTTM || m.epsExclExtraItemsTTM;
                     const rows = [
-                      { l:"52W High",     v: m["52WeekHigh"]   != null ? `${m["52WeekHigh"].toFixed(2)}`  : "—" },
-                      { l:"52W Low",      v: m["52WeekLow"]    != null ? `${m["52WeekLow"].toFixed(2)}`   : "—" },
+                      { l:"52W High",     v: m["52WeekHigh"]   != null ? `$${m["52WeekHigh"].toFixed(2)}`  : "—" },
+                      { l:"52W Low",      v: m["52WeekLow"]    != null ? `$${m["52WeekLow"].toFixed(2)}`   : "—" },
                       { l:"P/E (TTM)",    v: pe  != null ? pe.toFixed(2) : "—" },
-                      { l:"EPS (TTM)",    v: eps != null ? `${eps.toFixed(2)}` : "—" },
+                      { l:"EPS (TTM)",    v: eps != null ? `$${eps.toFixed(2)}` : "—" },
                       { l:"Beta",         v: m.beta != null ? m.beta.toFixed(2) : "—" },
                       { l:"Div Yield",    v: m.dividendYieldIndicatedAnnual != null ? `${m.dividendYieldIndicatedAnnual.toFixed(2)}%` : "—" },
-                      { l:"Div/Share",    v: m.dividendPerShareAnnual != null ? `${m.dividendPerShareAnnual.toFixed(2)}` : "—" },
+                      { l:"Div/Share",    v: m.dividendPerShareAnnual != null ? `$${m.dividendPerShareAnnual.toFixed(2)}` : "—" },
                       { l:"Avg Vol (10D)", v: m["10DayAverageTradingVolume"] != null ? `${m["10DayAverageTradingVolume"].toFixed(2)}M` : "—" },
                     ];
                     return (
@@ -575,9 +527,47 @@
             </Card>
           </div>
 
+          {/* News — full width with impact classification */}
+          <Card style={{ marginBottom:18 }}>
+            <Label>Latest News (Finnhub · past 30 days)</Label>
+            {newsL ? <Loading msg="Fetching news from Finnhub…" />
+              : newsE ? <ErrMsg msg={`News: ${newsE}`} />
+              : news.length ? (
+                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {news.map((item, i) => {
+                    const impact = classifyImpact(item.headline, item.summary);
+                    const impactColor = impact === "positive" ? "#10b981" : impact === "negative" ? "#ef4444" : "#94a3b8";
+                    return (
+                      <div key={i} style={{ background:`${impactColor}0d`, border:"1px solid #1a2744", borderLeft:`3px solid ${impactColor}`, borderRadius:8, padding:"12px 14px" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6, gap:12 }}>
+                          <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize:13, fontWeight:600, color:"#e2e8f0", lineHeight:1.4, flex:1 }}>
+                            {item.headline}
+                          </a>
+                          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 }}>
+                            <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:`${impactColor}22`, color:impactColor, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.5px", whiteSpace:"nowrap" }}>{impact}</span>
+                            <span style={{ fontSize:10, color:"#475569", whiteSpace:"nowrap" }}>{fmtDate(item.datetime)}</span>
+                          </div>
+                        </div>
+                        {item.summary && (
+                          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
+                            {item.summary.slice(0, 220)}{item.summary.length > 220 ? "…" : ""}
+                          </div>
+                        )}
+                        <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}>
+                          {item.source && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"rgba(99,102,241,0.15)", color:"#818cf8" }}>{item.source}</span>}
+                          {item.category && <span style={{ fontSize:10, padding:"2px 8px", borderRadius:4, background:"#1a2744", color:"#94a3b8" }}>{item.category}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <div style={{ color:"#334155", fontSize:13 }}>No news in past 30 days.</div>
+            }
+          </Card>
+
           {/* Footer */}
           <div style={{ fontSize:11, color:"#334155", textAlign:"center", marginTop:20, paddingBottom:10 }}>
-            Data: <a href="https://finnhub.io" target="_blank" rel="noreferrer">Finnhub</a> · <a href="https://stooq.com" target="_blank" rel="noreferrer">Stooq</a>
+            Data: <a href="https://finnhub.io" target="_blank" rel="noreferrer">Finnhub</a> · <a href="https://www.alphavantage.co" target="_blank" rel="noreferrer">Alpha Vantage</a>
           </div>
         </div>
       );
