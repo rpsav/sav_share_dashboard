@@ -162,11 +162,11 @@
 
     async function fetchGoogleNews() {
       const rssUrl = `https://news.google.com/rss/search?q=Accenture&hl=en-US&gl=US&ceid=US:en`;
-      const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=20`);
+      const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=30`);
       if (!r.ok) throw new Error(`rss2json HTTP ${r.status}`);
       const j = await r.json();
       if (j.status !== "ok") throw new Error(j.message || "RSS failed");
-      return (j.items || []).slice(0, 18).map(item => {
+      return (j.items || []).slice(0, 25).map(item => {
         const m = item.title.match(/^(.*?)\s-\s([^-]+)$/);
         return {
           headline: m ? m[1].trim() : item.title,
@@ -193,6 +193,8 @@
         const errs = results.filter(r => r.status === "rejected").map(r => r.reason.message);
         throw new Error(`All news sources failed: ${errs.join(" | ")}`);
       }
+      // Sort newest first BEFORE deduplication so newer articles win duplicates
+      items.sort((a, b) => (b.datetime || 0) - (a.datetime || 0));
       // Deduplicate by normalised headline prefix
       const seen = new Set();
       const unique = items.filter(item => {
@@ -201,8 +203,6 @@
         seen.add(key);
         return true;
       });
-      // Sort newest first
-      unique.sort((a, b) => (b.datetime || 0) - (a.datetime || 0));
       return unique.slice(0, 50);
     }
 
