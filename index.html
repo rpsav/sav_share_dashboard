@@ -173,9 +173,29 @@
           summary: stripHtml(item.description || "").slice(0, 240),
           url: item.link,
           datetime: Math.floor(new Date(item.pubDate).getTime() / 1000) || Math.floor(Date.now() / 1000),
-          source: m ? m[2].trim() : "Google News",
-          category: "Aggregated",
+          source: "Google News",
+          category: m ? m[2].trim() : "Web",
           _source: "Google News",
+        };
+      });
+    }
+
+    async function fetchSimplyWallStNews() {
+      const rssUrl = `https://news.google.com/rss/search?q=site:simplywall.st+Accenture&hl=en-US&gl=US&ceid=US:en`;
+      const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=15`);
+      if (!r.ok) throw new Error(`rss2json HTTP ${r.status}`);
+      const j = await r.json();
+      if (j.status !== "ok") throw new Error(j.message || "RSS failed");
+      return (j.items || []).slice(0, 10).map(item => {
+        const m = item.title.match(/^(.*?)\s-\s([^-]+)$/);
+        return {
+          headline: m ? m[1].trim() : item.title,
+          summary: stripHtml(item.description || "").slice(0, 240),
+          url: item.link,
+          datetime: Math.floor(new Date(item.pubDate).getTime() / 1000) || Math.floor(Date.now() / 1000),
+          source: "Simply Wall St",
+          category: "Analysis",
+          _source: "SimplyWallSt",
         };
       });
     }
