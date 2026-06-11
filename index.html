@@ -456,26 +456,34 @@
 
       const [ts, setTs]         = useState(null);
 
-      const refresh = useCallback(() => {
+      const refreshChart = useCallback(() => {
         setTs(new Date());
-
-        setPriceL(true); setPriceE(null);
-        fetchPrice().then(setPrice).catch(e => setPriceE(e.message)).finally(() => setPriceL(false));
-
         setChartL(true); setChartE(null);
         fetchHistorical().then(setChart).catch(e => setChartE(e.message)).finally(() => setChartL(false));
-
-        setNewsL(true); setNewsE(null);
-        fetchNews().then(setNews).catch(e => setNewsE(e.message)).finally(() => setNewsL(false));
-
-        setRecsL(true); setRecsE(null);
-        fetchRecommendations().then(setRecs).catch(e => setRecsE(e.message)).finally(() => setRecsL(false));
-
-        setMetricsL(true); setMetricsE(null);
-        fetchMetrics().then(setMetrics).catch(e => setMetricsE(e.message)).finally(() => setMetricsL(false));
       }, []);
 
-      useEffect(() => { refresh(); }, [refresh]);
+      const refreshAll = useCallback((silent = false) => {
+        setTs(new Date());
+
+        if (!silent) setPriceL(true);
+        fetchPrice().then(p => { setPrice(p); setPriceE(null); }).catch(e => setPriceE(e.message)).finally(() => { if (!silent) setPriceL(false); });
+
+        if (!silent) setNewsL(true);
+        fetchNews().then(n => { setNews(n); setNewsE(null); }).catch(e => setNewsE(e.message)).finally(() => { if (!silent) setNewsL(false); });
+
+        if (!silent) setRecsL(true);
+        fetchRecommendations().then(r => { setRecs(r); setRecsE(null); }).catch(e => setRecsE(e.message)).finally(() => { if (!silent) setRecsL(false); });
+
+        if (!silent) setMetricsL(true);
+        fetchMetrics().then(m => { setMetrics(m); setMetricsE(null); }).catch(e => setMetricsE(e.message)).finally(() => { if (!silent) setMetricsL(false); });
+      }, []);
+
+      useEffect(() => {
+        refreshChart();
+        refreshAll();
+        const interval = setInterval(() => refreshAll(true), 30000);
+        return () => clearInterval(interval);
+      }, [refreshChart, refreshAll]);
 
       const up   = (price?.changePct ?? 0) >= 0;
       const pCol = up ? "#10b981" : "#ef4444";
@@ -502,10 +510,10 @@
               <div style={{ width:38, height:38, borderRadius:9, background:"linear-gradient(135deg,#6366f1,#8b5cf6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, fontWeight:800, color:"#fff" }}>A</div>
               <div>
                 <div style={{ fontSize:17, fontWeight:700, letterSpacing:"-0.3px" }}>Accenture Intelligence Dashboard</div>
-                <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>NYSE: ACN · Finnhub + Alpha Vantage · {ts ? `Refreshed ${ts.toLocaleTimeString()}` : "Loading…"}</div>
+                <div style={{ fontSize:11, color:"#475569", marginTop:1 }}>NYSE: ACN · Auto-refresh every 30s · {ts ? `Last update ${ts.toLocaleTimeString()}` : "Loading…"}</div>
               </div>
             </div>
-            <button onClick={refresh} style={{ background:"linear-gradient(135deg,#3b82f6,#6366f1)", border:"none", borderRadius:8, color:"#fff", padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }}>↻ Refresh</button>
+            <button onClick={refreshChart} style={{ background:"linear-gradient(135deg,#3b82f6,#6366f1)", border:"none", borderRadius:8, color:"#fff", padding:"9px 18px", fontSize:13, fontWeight:600, cursor:"pointer" }}>↻ Refresh Chart</button>
           </div>
 
           {/* Price chart */}
