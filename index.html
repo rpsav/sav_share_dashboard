@@ -114,7 +114,7 @@
       if (!r.ok) throw new Error(`Finnhub news HTTP ${r.status}`);
       const arr = await r.json();
       if (!Array.isArray(arr)) return [];
-      return arr.slice(0, 8).map(item => ({ ...item, _source: "Finnhub" }));
+      return arr.slice(0, 20).map(item => ({ ...item, _source: "Finnhub" }));
     }
 
     async function fetchAccentureNews() {
@@ -126,11 +126,11 @@
       let lastErr = "";
       for (const feed of feeds) {
         try {
-          const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed)}&count=6`);
+          const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed)}&count=15`);
           if (!r.ok) { lastErr = `rss2json HTTP ${r.status}`; continue; }
           const j = await r.json();
           if (j.status !== "ok" || !Array.isArray(j.items) || !j.items.length) { lastErr = j.message || "empty"; continue; }
-          return j.items.slice(0, 5).map(item => ({
+          return j.items.slice(0, 12).map(item => ({
             headline: item.title,
             summary: stripHtml(item.description || item.content || "").slice(0, 240),
             url: item.link,
@@ -151,7 +151,7 @@
         if (r.ok) {
           const j = await r.json();
           if (j.news && j.news.length) {
-            return j.news.slice(0, 5).map(n => ({
+            return j.news.slice(0, 12).map(n => ({
               headline: n.title,
               summary: n.summary || `Published by ${n.publisher || "Yahoo Finance"}`,
               url: n.link || `https://finance.yahoo.com/news/${n.uuid}`,
@@ -166,11 +166,11 @@
 
       // Fallback: Google News RSS (aggregates many publishers including Yahoo content)
       const rssUrl = `https://news.google.com/rss/search?q=Accenture+ACN+stock&hl=en-US&gl=US&ceid=US:en`;
-      const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=6`);
+      const r = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=15`);
       if (!r.ok) throw new Error(`rss2json HTTP ${r.status}`);
       const j = await r.json();
       if (j.status !== "ok") throw new Error(j.message || "RSS failed");
-      return (j.items || []).slice(0, 5).map(item => {
+      return (j.items || []).slice(0, 12).map(item => {
         const m = item.title.match(/^(.*?)\s-\s([^-]+)$/);
         return {
           headline: m ? m[1].trim() : item.title,
@@ -206,7 +206,7 @@
       });
       // Sort newest first
       unique.sort((a, b) => (b.datetime || 0) - (a.datetime || 0));
-      return unique.slice(0, 15);
+      return unique.slice(0, 30);
     }
 
     async function fetchRecommendations() {
@@ -627,10 +627,10 @@
           {/* News — full width with impact classification */}
           <Card style={{ marginBottom:18 }}>
             <Label>Latest News (Finnhub · Accenture Newsroom · Yahoo)</Label>
-            {newsL ? <Loading msg="Fetching news from Finnhub…" />
+            {newsL ? <Loading msg="Fetching news from Finnhub, Accenture & Yahoo…" />
               : newsE ? <ErrMsg msg={`News: ${newsE}`} />
               : news.length ? (
-                <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                <div style={{ display:"flex", flexDirection:"column", gap:10, maxHeight:700, overflowY:"auto", paddingRight:8 }}>
                   {news.map((item, i) => {
                     const impact = classifyImpact(item.headline, item.summary);
                     const impactColor = impact === "positive" ? "#10b981" : impact === "negative" ? "#ef4444" : "#94a3b8";
