@@ -26,7 +26,7 @@
 
     // ====== CONFIG ======
     const FINNHUB_TOKEN = "d8k3fghr01qjgd6qvv0gd8k3fghr01qjgd6qvv10";
-    const ALPHAVANTAGE_TOKEN = "UYAY90XN6OM3UV1M";
+    const ALPHAVANTAGE_TOKENS = ["UYAY90XN6OM3UV1M", "MJ6KFN5BFF4SPAYU"];
     const SYMBOL = "ACN";
 
     // ====== HELPERS ======
@@ -225,34 +225,49 @@
     }
 
     async function fetchHistorical() {
-      if (!ALPHAVANTAGE_TOKEN) {
-        throw new Error("Alpha Vantage API key required. Get a free one at alphavantage.co/support/#api-key and add it to the ALPHAVANTAGE_TOKEN constant at the top of the HTML.");
+      if (!ALPHAVANTAGE_TOKENS.length) {
+        throw new Error("Alpha Vantage API key required. Add at least one key to the ALPHAVANTAGE_TOKENS array at the top of the HTML.");
       }
 
-      const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_MONTHLY&symbol=${SYMBOL}&apikey=${ALPHAVANTAGE_TOKEN}`);
-      if (!r.ok) throw new Error(`Alpha Vantage HTTP ${r.status}`);
-      const j = await r.json();
+      const errors = [];
+      for (let i = 0; i < ALPHAVANTAGE_TOKENS.length; i++) {
+        const token = ALPHAVANTAGE_TOKENS[i];
+        if (!token) continue;
 
-      if (j.Note) throw new Error("Alpha Vantage rate limit reached (25/day on free tier). Try again tomorrow.");
-      if (j["Error Message"]) throw new Error(`Alpha Vantage: ${j["Error Message"]}`);
-      if (j.Information) throw new Error(`Alpha Vantage: ${j.Information}`);
+        const r = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_MONTHLY&symbol=${SYMBOL}&apikey=${token}`);
+        if (!r.ok) {
+          if (r.status === 429) { errors.push(`Key ${i+1}: HTTP 429`); continue; }
+          throw new Error(`Alpha Vantage HTTP ${r.status}`);
+        }
+        const j = await r.json();
 
-      const series = j["Monthly Time Series"];
-      if (!series) throw new Error(`Unexpected response: ${JSON.stringify(j).slice(0, 150)}`);
+        // Rate-limit indicators (Note = per-minute limit; Information = daily limit) — try next key
+        if (j.Note || j.Information) {
+          errors.push(`Key ${i+1}: ${(j.Note || j.Information).slice(0, 80)}`);
+          continue;
+        }
 
-      const rows = Object.entries(series)
-        .map(([date, vals]) => {
-          const price = parseFloat(vals["4. close"]);
-          if (isNaN(price)) return null;
-          const [y, m] = date.split("-");
-          return { date: `${monthAbbr[+m]} '${y.slice(2)}`, price, raw: date };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.raw > b.raw ? 1 : -1)
-        .slice(-120);
+        if (j["Error Message"]) throw new Error(`Alpha Vantage: ${j["Error Message"]}`);
 
-      if (rows.length < 4) throw new Error(`Only ${rows.length} months returned`);
-      return rows;
+        const series = j["Monthly Time Series"];
+        if (!series) throw new Error(`Unexpected response: ${JSON.stringify(j).slice(0, 150)}`);
+
+        const rows = Object.entries(series)
+          .map(([date, vals]) => {
+            const price = parseFloat(vals["4. close"]);
+            if (isNaN(price)) return null;
+            const [y, m] = date.split("-");
+            return { date: `${monthAbbr[+m]} '${y.slice(2)}`, price, raw: date };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.raw > b.raw ? 1 : -1)
+          .slice(-120);
+
+        if (rows.length < 4) throw new Error(`Only ${rows.length} months returned`);
+        return rows;
+      }
+
+      throw new Error(`All Alpha Vantage keys rate limited. Errors: ${errors.join(" | ")}`);
     }
 
     // ====== UI HELPERS ======
